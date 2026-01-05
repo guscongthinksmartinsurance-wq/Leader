@@ -3,7 +3,7 @@ import pandas as pd
 import numpy as np
 import re
 
-# --- 1. HÀM LÀM SẠCH ---
+# --- 1. LÀM SẠCH ---
 def clean_id_final(lead_id):
     if pd.isna(lead_id) or str(lead_id).strip().upper() == 'NONE': return ""
     s = str(lead_id).strip().upper()
@@ -19,13 +19,12 @@ def clean_phone_9(phone):
     s = re.sub(r'\D', '', str(phone))
     return s[-9:] if len(s) >= 9 else s
 
-# --- 2. ENGINE XỬ LÝ CHÍNH ---
+# --- 2. ENGINE XỬ LÝ ---
 def process_data(f_mkt, f_crm, f_ml):
-    # Đọc dữ liệu
     df_mkt = pd.read_excel(f_mkt) if f_mkt.name.endswith('.xlsx') else pd.read_csv(f_mkt)
     df_crm = pd.read_excel(f_crm) if f_crm.name.endswith('.xlsx') else pd.read_csv(f_crm)
     
-    # Đọc Masterlife - Giữ đúng 1625 hồ sơ gốc
+    # Load Masterlife - Gốc doanh số 1625 hồ sơ
     raw_ml = pd.read_excel(f_ml, header=None)
     h_row = 0
     for i, row in raw_ml.head(20).iterrows():
@@ -33,7 +32,7 @@ def process_data(f_mkt, f_crm, f_ml):
             h_row = i; break
     df_ml = pd.read_excel(f_ml, skiprows=h_row).copy()
 
-    # --- CHUẨN HÓA CRM (CHỈ LÀM TRA CỨU, KHÔNG TÍNH DOANH SỐ) ---
+    # CHUẨN HÓA CRM TRA CỨU
     df_crm['MATCH_ID'] = df_crm['LEAD ID'].apply(clean_id_final)
     df_crm['MATCH_NAME'] = df_crm['CONTACT NAME'].apply(clean_name_final)
     df_crm['MATCH_PHONE'] = df_crm['CELLPHONE'].apply(clean_phone_9)
@@ -45,11 +44,11 @@ def process_data(f_mkt, f_crm, f_ml):
         return '3. Khác'
     df_crm['SOURCE_STD'] = df_crm['SOURCE'].apply(map_source_std)
 
-    # Từ điển 1-1 (Ép buộc không nhân dòng)
+    # Từ điển tra cứu 1-1
     map_id_to_src = df_crm[df_crm['MATCH_ID'] != ''].drop_duplicates('MATCH_ID').set_index('MATCH_ID')['SOURCE_STD'].to_dict()
     map_name_to_src = df_crm.drop_duplicates('MATCH_NAME').set_index('MATCH_NAME')['SOURCE_STD'].to_dict()
 
-    # --- TẦNG 3: CHỈ DÙNG MASTERLIFE ---
+    # --- TẦNG 3: XỬ LÝ TRÊN MASTERLIFE ---
     df_ml['REV'] = df_ml['TARGET PREMIUM'].apply(lambda x: float(re.sub(r'[^0-9.]', '', str(x))) if pd.notna(x) and re.sub(r'[^0-9.]', '', str(x)) != '' else 0.0)
     
     def lookup_source(row):
@@ -61,17 +60,18 @@ def process_data(f_mkt, f_crm, f_ml):
 
     df_ml['SOURCE_FINAL'] = df_ml.apply(lookup_source, axis=1)
 
-    # --- HIỂN THỊ GIAO DIỆN (KHÓA CẤU TRÚC) ---
+    # --- GIAO DIỆN ---
     st.title("📊 TMC Strategic Dashboard")
     t1, t2, t3 = st.tabs(["🎯 Tầng 1: Marketing Efficiency", "🏢 Tầng 2: CRM Pipeline", "💰 Tầng 3: Sales Performance"])
 
     with t1:
         st.subheader("Báo cáo chất lượng Lead thô")
+        # Giữ nguyên bảng Table Tầng 1
         df_mkt['M_ID'] = df_mkt['LEAD ID'].apply(clean_id_final)
         df_mkt['M_PH'] = df_mkt['CELLPHONE'].apply(clean_phone_9)
         matched_mkt = df_mkt[df_mkt['M_ID'].isin(df_crm['MATCH_ID']) | df_mkt['M_PH'].isin(df_crm['MATCH_PHONE'])]
         mkt_sum = pd.DataFrame({
-            "Hạng mục": ["Tổng Lead thô (Marketing File)", "Lead hợp lệ (Đã lên CRM)", "Lead rác (Không lên CRM)"],
+            "Hạng mục": ["Tổng Lead thô (MKT File)", "Lead hợp lệ (Đã lên CRM)", "Lead rác"],
             "Số lượng": [len(df_mkt), len(matched_mkt), len(df_mkt) - len(matched_mkt)],
             "Tỷ lệ": ["100%", f"{(len(matched_mkt)/len(df_mkt)*100):.1f}%", f"{((len(df_mkt)-len(matched_mkt))/len(df_mkt)*100):.1f}%"]
         })
@@ -81,23 +81,24 @@ def process_data(f_mkt, f_crm, f_ml):
         st.subheader("Ma trận Trạng thái Lead trên CRM")
         status_map = {'Done (100%)': '✅ Won (100%)', 'Done (50%)': '⏳ Won (50%)', 'Cold (5%)': 'Pipeline', 'Unidentified (10%)': 'Pipeline', 'Follow Up (50%)': 'Pipeline', 'Interest (75%)': 'Pipeline', 'Hot Interest (85%)': 'Pipeline', 'Stop (0%)': '❌ Lost/Stop'}
         df_crm['GROUP_STATUS'] = df_crm['STATUS'].map(status_map).fillna('Khác')
-        sel_stage = st.multiselect("Lọc Stage:", options=df_crm['STAGE'].unique())
-        df_c_f = df_crm if not sel_stage else df_crm[df_crm['STAGE'].isin(sel_stage)]
-        pivot_crm = df_c_f.groupby(['SOURCE_STD', 'GROUP_STATUS']).size().unstack(fill_value=0)
+        pivot_crm = df_crm.groupby(['SOURCE_STD', 'GROUP_STATUS']).size().unstack(fill_value=0)
         st.dataframe(pivot_crm.style.background_gradient(cmap='Blues'), use_container_width=True)
 
     with t3:
-        st.subheader("Hiệu suất Doanh thu Masterlife (Khớp 1625 Hồ Sơ)")
-        # Bảng doanh thu tách dòng - Đảm bảo hiện cả Cold Call và Funnel
-        summary = df_ml.groupby('SOURCE_FINAL')['REV'].agg(['sum', 'count']).reset_index()
+        st.subheader("Hiệu suất Doanh thu (Gốc Masterlife - 1625 Hồ Sơ)")
+        
+        # ÉP BẢNG HIỆN ĐỦ CÁC DÒNG NGUỒN (BAO GỒM COLD CALL)
+        all_sources = ['1. Cold Call', '2. Funnel', '4. Ngoài CRM / Lỗi ID']
+        summary = df_ml.groupby('SOURCE_FINAL')['REV'].agg(['sum', 'count']).reindex(all_sources, fill_value=0).reset_index()
         summary.columns = ['Nguồn', 'Tổng Doanh Thu', 'Số hồ sơ chốt']
         
         st.dataframe(summary.style.format({"Tổng Doanh Thu": "${:,.0f}"}), use_container_width=True)
         
-        st.info(f"Tổng doanh thu Masterlife: ${df_ml['REV'].sum():,.0f} | Tổng số hồ sơ: {len(df_ml):,}")
+        st.success(f"Tổng doanh thu Masterlife khớp: ${df_ml['REV'].sum():,.0f}")
+        st.success(f"Tổng số hồ sơ Masterlife khớp: {len(df_ml):,}")
 
-# --- SIDEBAR ---
-st.sidebar.header("Tải file báo cáo")
+# SIDEBAR
+st.sidebar.header("Upload Files")
 f1 = st.sidebar.file_uploader("1. Marketing", type=['xlsx', 'csv'])
 f2 = st.sidebar.file_uploader("2. CRM", type=['xlsx', 'csv'])
 f3 = st.sidebar.file_uploader("3. Masterlife", type=['xlsx', 'csv'])
