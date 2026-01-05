@@ -98,6 +98,16 @@ def process_full_system(file_mkt, file_crm, file_ml):
     # Gộp CRM và Masterlife để lấy doanh thu
     df_final = pd.merge(df_crm, df_ml[['MATCH_ID', 'MATCH_NAME', 'REV', ml_y_c, ml_m_c]], 
                         left_on='MATCH_ID', right_on='MATCH_ID', how='left')
+    crm_ids = set(df_crm['MATCH_ID'].unique())
+    
+    df_missing = df_ml[~df_ml['MATCH_ID'].isin(crm_ids)].copy()
+    
+    if not df_missing.empty:
+        st.error(f"⚠️ Phát hiện ${df_missing['REV'].sum():,.0f} doanh thu không khớp với CRM!")
+        st.subheader("Danh sách Lead ID có tiền nhưng không có trong CRM:")
+        st.dataframe(df_missing[[ml_id_c, ml_name_c, 'REV']], use_container_width=True)
+    else:
+        st.success("✅ Tuyệt vời! 100% doanh thu đã khớp với CRM.")
     
     # --- HIỂN THỊ STREAMLIT ---
     st.title("📊 TMC Strategic CRM & Marketing Portal")
@@ -156,4 +166,5 @@ file_ml = st.sidebar.file_uploader("3. File Masterlife (Doanh thu)", type=['xlsx
 if file_mkt and file_crm and file_ml:
     process_full_system(file_mkt, file_crm, file_ml)
 else:
+
     st.warning("Vui lòng nạp đầy đủ 3 file để hệ thống bắt đầu phân tích.")
