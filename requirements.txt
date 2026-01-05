@@ -3,5 +3,5 @@ numpy
 openpyxl
 xlsxwriter
 matplotlib
-plotly
-io
+plot
+streamlit
