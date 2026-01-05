@@ -6,98 +6,109 @@ from io import BytesIO
 
 # --- 1. CẤU HÌNH GIAO DIỆN ---
 st.set_page_config(page_title="TMC Strategic CRM Portal", layout="wide")
-st.markdown("""
-    <style>
-    .main { background-color: #0E1117; color: #FFFFFF; }
-    [data-testid="stMetricValue"] { color: #00D4FF !important; font-weight: 900 !important; }
-    </style>
-    """, unsafe_allow_html=True)
 
-# --- 2. HÀM LÀM SẠCH SIÊU CẤP ---
-def clean_id_ultra(lead_id):
-    """Bóc dấu nháy đơn, khoảng trắng và chuẩn hóa về dạng chuỗi số"""
+# --- 2. HÀM LÀM SẠCH ID SIÊU CẤP (XỬ LÝ DẤU #, ', *...) ---
+def clean_id_final(lead_id):
     if pd.isna(lead_id): return ""
-    # Xóa dấu nháy đơn, khoảng trắng, và chuyển về string
-    s = str(lead_id).replace("'", "").strip()
-    # Loại bỏ đuôi .0 nếu Excel hiểu lầm là số thập phân
+    # Chuyển về string và viết hoa
+    s = str(lead_id).strip().upper()
+    # Loại bỏ tất cả ký tự không phải chữ cái và số ở đầu/cuối (như #, ', *, -)
+    s = re.sub(r'^[^A-Z0-9]+|[^A-Z0-9]+$', '', s)
+    # Loại bỏ đuôi .0 nếu có
     if s.endswith('.0'): s = s[:-2]
     return s
 
 def clean_phone_9(phone):
-    """Lấy 9 số cuối để khớp điện thoại bất kể định dạng"""
     s = re.sub(r'\D', '', str(phone))
     return s[-9:] if len(s) >= 9 else s
 
-# --- 3. ENGINE PHÂN TÍCH ---
+# --- 3. ENGINE XỬ LÝ ---
 def process_data(f_mkt, f_crm, f_ml):
-    # Đọc dữ liệu
+    # Đọc file
     df_mkt = pd.read_excel(f_mkt) if f_mkt.name.endswith('.xlsx') else pd.read_csv(f_mkt)
     df_crm = pd.read_excel(f_crm) if f_crm.name.endswith('.xlsx') else pd.read_csv(f_crm)
     
-    # Masterlife dùng logic smart_load để tìm Target Premium
+    # Masterlife logic tìm Target Premium
     raw_ml = pd.read_excel(f_ml, header=None) if f_ml.name.endswith('.xlsx') else pd.read_csv(f_ml, header=None)
-    header_row = 0
+    h_row = 0
     for i, row in raw_ml.head(20).iterrows():
         if 'TARGET PREMIUM' in " ".join(str(val).upper() for val in row):
-            header_row = i; break
-    df_ml = pd.read_excel(f_ml, skiprows=header_row)
+            h_row = i; break
+    df_ml = pd.read_excel(f_ml, skiprows=h_row)
 
-    # CHUẨN HÓA ĐỊNH DANH (Dùng bản Ultra Clean)
-    df_crm['MATCH_ID'] = df_crm['LEAD ID'].apply(clean_id_ultra)
-    df_ml['MATCH_ID'] = df_ml['LEAD ID'].apply(clean_id_ultra)
+    # --- CHUẨN HÓA ĐỊNH DANH ---
+    df_mkt['MATCH_ID'] = df_mkt['LEAD ID'].apply(clean_id_final)
+    df_mkt['MATCH_PHONE'] = df_mkt['CELLPHONE'].apply(clean_phone_9)
     
-    # Chuẩn hóa Source Mapping
-    def map_source(src):
-        s = str(src).upper()
-        if any(x in s for x in ['CC', 'COLD CALL']): return '1. Cold Call'
-        if any(x in s for x in ['SF', 'FUNNEL']): return '2. Funnel'
-        return '3. Khác'
-
-    df_crm['SOURCE_STD'] = df_crm['SOURCE'].apply(map_source)
+    df_crm['MATCH_ID'] = df_crm['LEAD ID'].apply(clean_id_final)
+    df_crm['MATCH_PHONE'] = df_crm['CELLPHONE'].apply(clean_phone_9)
+    
+    df_ml['MATCH_ID'] = df_ml['LEAD ID'].apply(clean_id_final)
     df_ml['REV'] = df_ml['TARGET PREMIUM'].apply(lambda v: float(re.sub(r'[^0-9.]', '', str(v))) if pd.notna(v) and re.sub(r'[^0-9.]', '', str(v)) != '' else 0.0)
 
-    # --- TẦNG 3: HIỆU SUẤT & TRUY THU DOANH THU ---
-    # Merge lấy Source từ CRM sang ML
-    df_final = pd.merge(df_ml, df_crm[['MATCH_ID', 'SOURCE_STD', 'STATUS', 'STAGE']], on='MATCH_ID', how='left')
+    # Map Source
+    def map_source(src):
+        s = str(src).upper()
+        if any(x in s for x in ['CC', 'COLD CALL', '1.']): return '1. Cold Call'
+        if any(x in s for x in ['SF', 'FUNNEL', '2.']): return '2. Funnel'
+        return '3. Khác'
+    
+    df_crm['SOURCE_STD'] = df_crm['SOURCE'].apply(map_source)
+
+    # --- TẦNG 1: BẢNG BÁO LEAD THÔ ---
+    total_mkt = len(df_mkt)
+    # Khớp sang CRM để tìm lead hợp lệ
+    matched_in_crm = df_mkt[df_mkt['MATCH_ID'].isin(df_crm['MATCH_ID']) | df_mkt['MATCH_PHONE'].isin(df_crm['MATCH_PHONE'])]
+    valid_count = len(matched_in_crm)
+    junk_count = total_mkt - valid_count
+
+    # --- TẦNG 3: DOANH THU ---
+    df_final = pd.merge(df_ml, df_crm[['MATCH_ID', 'SOURCE_STD', 'STATUS']], on='MATCH_ID', how='left')
     df_final['SOURCE_STD'] = df_final['SOURCE_STD'].fillna('4. Ngoài CRM / Lỗi ID')
 
-    # --- HIỂN THỊ ---
-    st.title("🚀 TMC Strategic CRM & Marketing Portal")
+    # --- GIAO DIỆN ---
+    st.title("🚀 TMC Strategic Portal - Bản Full 3 Tầng")
     
-    total_rev_ml = df_ml['REV'].sum()
-    rev_matched = df_final[df_final['SOURCE_STD'] != '4. Ngoài CRM / Lỗi ID']['REV'].sum()
-    rev_missing = total_rev_ml - rev_matched
-
+    total_rev = df_ml['REV'].sum()
+    rev_ok = df_final[df_final['SOURCE_STD'] != '4. Ngoài CRM / Lỗi ID']['REV'].sum()
+    
     c1, c2, c3 = st.columns(3)
-    c1.metric("💰 TỔNG DOANH THU (ML)", f"${total_rev_ml:,.0f}")
-    c2.metric("✅ KHỚP CRM", f"${rev_matched:,.0f}", f"-${rev_missing:,.0f} Lệch")
-    c3.metric("📋 HỒ SƠ CHỐT", f"{len(df_ml):,}")
+    c1.metric("📥 TỔNG LEAD MKT", f"{total_mkt:,}")
+    c2.metric("💰 TỔNG DOANH THU", f"${total_rev:,.0f}")
+    c3.metric("⚠️ DOANH THU LỆCH", f"${(total_rev - rev_ok):,.0f}")
 
-    tab1, tab2, tab3 = st.tabs(["🎯 Tầng 1: MKT", "🏢 Tầng 2: CRM", "💰 Tầng 3: Efficiency"])
+    t1, t2, t3 = st.tabs(["🎯 Tầng 1: Marketing", "🏢 Tầng 2: CRM", "💰 Tầng 3: Efficiency"])
 
-    with tab3:
-        st.subheader("ARPL & Hiệu suất theo Nguồn")
-        # Tính toán ARPL tách dòng
-        arpl_df = df_final.groupby('SOURCE_STD')['REV'].agg(['sum', 'count'])
-        arpl_df['ARPL'] = arpl_df['sum'] / arpl_df['count']
-        st.dataframe(arpl_df.style.format("${:,.0f}"), use_container_width=True)
+    with t1:
+        st.subheader("Báo cáo chất lượng Lead thô")
+        mkt_report = pd.DataFrame({
+            "Hạng mục": ["Tổng Lead đổ về (File Marketing)", "Lead hợp lệ (Đã lên CRM)", "Lead rác (Không liên lạc được/Không lên CRM)"],
+            "Số lượng": [total_mkt, valid_count, junk_count],
+            "Tỷ lệ %": ["100%", f"{(valid_count/total_mkt*100):.1f}%", f"{(junk_count/total_mkt*100):.1f}%"]
+        })
+        st.table(mkt_report) # Dùng bảng table cho rõ ràng
 
-        if rev_missing > 0:
-            with st.expander("🔍 Xem danh sách $371k bị lệch (Cần check ID hoặc dấu nháy)"):
-                df_error = df_final[df_final['SOURCE_STD'] == '4. Ngoài CRM / Lỗi ID']
-                st.dataframe(df_error[['LEAD ID', 'CONTACT NAME', 'REV']], use_container_width=True)
+    with t2:
+        st.subheader("Quản trị Trạng thái & Giai đoạn")
+        status_pivot = df_crm.groupby(['SOURCE_STD', 'STATUS']).size().reset_index(name='Số lượng')
+        st.dataframe(status_pivot.style.background_gradient(cmap='Blues'), use_container_width=True)
 
-    with tab2:
-        st.subheader("Nhóm Done (50%) cần Push số")
-        df_50 = df_crm[df_crm['STATUS'] == 'Done (50%)']
-        st.write(f"Đang có {len(df_50)} hồ sơ cần dứt điểm.")
-        st.dataframe(df_50[['LEAD ID', 'CONTACT NAME', 'STAGE', 'SOURCE_STD']], use_container_width=True)
+    with t3:
+        st.subheader("Doanh thu thực tế (Tách dòng)")
+        eff_df = df_final.groupby('SOURCE_STD')['REV'].agg(['sum', 'count'])
+        eff_df.columns = ['Tổng Doanh Thu', 'Số hồ sơ chốt']
+        eff_df['ARPL'] = eff_df['Tổng Doanh Thu'] / eff_df['Số hồ sơ chốt']
+        st.dataframe(eff_df.style.format("${:,.0f}"), use_container_width=True)
+        
+        if (total_rev - rev_ok) > 0:
+            with st.expander("🔍 Chi tiết danh sách lệch (Check mã ID có dấu #, ')"):
+                st.dataframe(df_final[df_final['SOURCE_STD'] == '4. Ngoài CRM / Lỗi ID'][['LEAD ID', 'CONTACT NAME', 'REV']])
 
-# --- SIDEBAR ---
-st.sidebar.title("🛠️ Control Center")
-f1 = st.sidebar.file_uploader("1. Marketing File", type=['xlsx', 'csv'])
-f2 = st.sidebar.file_uploader("2. CRM File", type=['xlsx', 'csv'])
-f3 = st.sidebar.file_uploader("3. Masterlife File", type=['xlsx', 'csv'])
+# SIDEBAR UPLOAD
+st.sidebar.header("Tải file lên")
+f1 = st.sidebar.file_uploader("File Marketing", type=['xlsx', 'csv'])
+f2 = st.sidebar.file_uploader("File CRM", type=['xlsx', 'csv'])
+f3 = st.sidebar.file_uploader("File Masterlife", type=['xlsx', 'csv'])
 
 if f1 and f2 and f3:
     process_data(f1, f2, f3)
