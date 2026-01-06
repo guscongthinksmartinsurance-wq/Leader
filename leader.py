@@ -64,8 +64,8 @@ def process_data(f_mkt, f_crm, f_ml):
     pivot_crm = df_crm.groupby(['SOURCE_STD', 'STATUS']).size().unstack(fill_value=0)
 
     # --- GIAO DIỆN HIỂN THỊ ---
-    st.title("📊 TMC Strategic Dashboard")
-    t1, t2, t3 = st.tabs(["🎯 Tầng 1: Marketing", "🏢 Tầng 2: CRM Pipeline", "💰 Tầng 3: Sales Performance"])
+    st.title("📊 Keyleader Dashboard")
+    t1, t2, t3 = st.tabs(["🎯 Marketing", "🏢 CRM Pipeline", "💰 Sales Performance"])
 
     with t1:
         st.subheader("Báo cáo chất lượng Lead thô")
@@ -84,11 +84,11 @@ def process_data(f_mkt, f_crm, f_ml):
         
         buf_hl = io.BytesIO()
         df_hop_le.to_excel(buf_hl, index=False)
-        col_dl1.download_button("✅ Tải Lead Hợp Lệ", data=buf_hl.getvalue(), file_name="Danh_Sach_Lead_Hop_Le.xlsx")
+        col_dl1.download_button("✅ Lead Hợp Lệ", data=buf_hl.getvalue(), file_name="Danh_Sach_Lead_Hop_Le.xlsx")
         
         buf_rac = io.BytesIO()
         df_rac.to_excel(buf_rac, index=False)
-        col_dl2.download_button("❌ Tải Lead Rác (Kiểm tra Mất Tích)", data=buf_rac.getvalue(), file_name="Danh_Sach_Lead_Rac.xlsx")
+        col_dl2.download_button("❌ Lead Rác", data=buf_rac.getvalue(), file_name="Danh_Sach_Lead_Rac.xlsx")
 
     with t2:
         st.subheader("Ma trận Trạng thái Chi tiết (CRM)")
@@ -128,3 +128,4 @@ f3 = st.sidebar.file_uploader("3. Masterlife", type=['xlsx', 'csv'])
 
 if f1 and f2 and f3:
     process_data(f1, f2, f3)
+
