@@ -48,7 +48,7 @@ def process_data(f_mkt, f_crm, f_ml):
 
     # Cập nhật cột Lý do rác - CHỈ RA DỮ LIỆU MẤT TÍCH
     def get_missing_reason(row):
-        return "Dữ liệu MẤT TÍCH trên CRM (Tra soát lại việc nhập liệu)"
+        return "Dữ liệu MẤT TÍCH trên CRM"
 
     if not df_rac.empty:
         df_rac['Kết quả đối soát'] = df_rac.apply(get_missing_reason, axis=1)
@@ -128,4 +128,5 @@ f3 = st.sidebar.file_uploader("3. Masterlife", type=['xlsx', 'csv'])
 
 if f1 and f2 and f3:
     process_data(f1, f2, f3)
+
 
